@@ -33,7 +33,12 @@ path_out = f'{dt3}-{dt2}-{dt1}'
 path_in = f'{dt31}-{dt21}-{dt11}'
 
 START_DATE = TODAY - timedelta(days=30)
-END_DATE = TODAY - timedelta(days=5) # 10 days ago from today START_DATE = END_DATE - timedelta(days=4) # 7 days before END_DATE (inclusive) INPUT_PATH = rf'\‪C:\Users<username>\OneDrive<folder>{path_in}.xlsx' OUTPUT_PATH = rf'\‪C:\Users<username>\OneDrive<folder>{path_out}.xlsx' CONNECTION_STRING1 = "mssql+pyodbc://<DBodbc_connectionname>" CONNECTION_STRING2 = "mssql+pyodbc://<DBodbc_connectionname>"
+END_DATE = TODAY - timedelta(days=5) # 10 days ago from today
+START_DATE = END_DATE - timedelta(days=4) # 7 days beforeEND_DATE (inclusive) 
+INPUT_PATH = rf'\your_file{path_in}.xlsx' 
+OUTPUT_PATH = rf'\your_file{path_out}.xlsx' 
+CONNECTION_STRING1 = "mssql+pyodbc://<DBodbc_connectionname>" 
+CONNECTION_STRING2 = "mssql+pyodbc://<DBodbc_connectionname>"
 
 """Convert dates to string format"""
 START_DATE_STR = START_DATE.strftime("%Y-%m-%d") 
