@@ -1,0 +1,235 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun  3 14:01:55 2025
+
+@author: jeffrey.stetar
+"""
+
+import pandas as pd
+import os
+from datetime import date, timedelta
+import time
+
+"""Configuration"""
+TODAY = date.today() 
+dt1 = TODAY.strftime("%Y") 
+dt2 = TODAY.strftime("%b") 
+dt3 = TODAY.strftime("%d") 
+dt4 = dt3 + dt2 + dt1
+
+YSTDAY = TODAY - timedelta(days=1) 
+dt11 = YSTDAY.strftime("%Y") 
+dt21 = YSTDAY.strftime("%b") 
+dt31 = YSTDAY.strftime("%d") 
+dt41 = dt31 + dt21 + dt11
+# Load data
+df = pd.read_excel(
+    r"your_file.xlsx"
+)
+
+# Define the output path
+path_out = f'{dt3}-{dt2}-{dt1}' 
+output_dir = r"your_file_directory"
+output_file = os.path.join(output_dir, f"final_output_all_{path_out}.xlsx")
+
+
+# Shared function for NAS/NAP weight
+def calculate_tier(summary):
+    if summary == -1:
+        score = 5
+    elif 12 <= summary <= 13:
+        score = 0
+    elif 9 <= summary <= 11:
+        score = 1
+    elif 5 <= summary <= 8:
+        score = 2
+    elif 1 <= summary <= 4:
+        score = 3
+    else:
+        score = 4
+    return score / 3 * 0.2
+
+df['NAS weight'] = df['nas_summary'].apply(calculate_tier)
+df['NAP weight'] = df['nap_summary'].apply(calculate_tier)
+
+# CVI weight
+df['CVI weight'] = df['cvi'].apply(lambda x: 0 if x == 0 else (10 / abs(x)) * 0.3)
+
+# Risk score
+df['risk_score'] = df['custom_score_1'].apply(lambda x: -0.6 if pd.isna(x) or x == -1 else x * 0.3)
+
+# Composite Risk Score
+df['CompositeRiskScore'] = (
+    df['risk_score'] +
+    df['NAS weight'] * 0.2 +
+    df['NAP weight'] * 0.2 +
+    df['CVI weight']
+)
+
+# Composite Risk Tier
+def get_composite_risk_tier(score):
+    if score < 0:
+        return 'Unacceptable Risk'
+    elif score <= 0.335:
+        return 'Very Low Risk'
+    elif score <= 0.35:
+        return 'Low Risk'
+    elif score <= 0.5:
+        return 'Moderate Risk'
+    elif score <= 0.7:
+        return 'High Risk (Acceptable)'
+    else:
+        return 'Unacceptable Risk'
+
+df['CompositeRiskTier'] = df['CompositeRiskScore'].apply(get_composite_risk_tier)
+
+# HRI scoring
+hri_scoring_dict = {'CZ': -5,'SR':  -5,'IS': -10,'MI': -10,'NB':   0, None:  0,'PA': -1,'VA': -5, 
+                    'ZI': -5,'SD': -10,'WL': -10,'IT': -10,'CL': -10,'PO': -10,'RS':  0, 
+                    14: -10, 11: -10, 30:  -1, 64: -5, 83: -1, 52: -7, 51: -7, 82: -5, 32: -5,
+                    76: -1,  49: -5,  44: -1,  16: -5, 10:  0, 74: -3, 31: -1, 66: -5, 72: -10, 
+                    38: -10,  6: -15, 71: -5,  90:  0, 29: -1, 25: -5, 28: -5, 48: -5, 19: -15, 
+                    27: -5,  26: -5,}
+
+for i in range(1, 18):
+    df[f'hri_Score_{i}'] = df[f'hri_{i}'].map(hri_scoring_dict).fillna(0)
+
+df['Total_HRI_Score'] = df[[f'hri_Score_{i}' for i in range(1, 18)]].sum(axis=1)
+
+def get_hri_risk_tier(score):
+    if score >= 0:
+        return 'Very Low Risk'
+    elif score >= -8:
+        return 'Low Risk'
+    elif score >= -20:
+        return 'Moderate Risk'
+    elif score >= -39:
+        return 'High Risk'
+    else:
+        return 'Unacceptable Risk'
+
+df['HRI_Risk_Tier'] = df['Total_HRI_Score'].apply(get_hri_risk_tier)
+
+
+
+# Verification status
+df['VerificationStatus'] = df['CompositeRiskTier'].apply(
+    lambda x: 'Verified' if x == 'Very Low Risk' else 'Verification Required'
+)
+
+def flag_payment_issues(row):
+    max_loan_amount = max(row['PB_GROSS_LOANS_24MO'], row['LOANAMOUNTFINANCED'])
+
+    # Skip flagging if either 6mo or 24mo gross is >= max loan amount
+    if row['CUSTOMER_6MO_GROSS'] >= max_loan_amount or row['CUSTOMER_24MO_GROSS'] >= max_loan_amount:
+        return 'No Flag'
+
+    # Avoid division by zero
+    try:
+        progress_6_to_12 = (row['CUSTOMER_12MO_GROSS'] - row['CUSTOMER_6MO_GROSS']) / row['CUSTOMER_6MO_GROSS'] * 100 if row['CUSTOMER_6MO_GROSS'] != 0 else float('inf')
+        progress_12_to_18 = (row['CUSTOMER_18MO_GROSS'] - row['CUSTOMER_12MO_GROSS']) / row['CUSTOMER_12MO_GROSS'] * 100 if row['CUSTOMER_12MO_GROSS'] != 0 else float('inf')
+        progress_18_to_24 = (row['CUSTOMER_24MO_GROSS'] - row['CUSTOMER_18MO_GROSS']) / row['CUSTOMER_18MO_GROSS'] * 100 if row['CUSTOMER_18MO_GROSS'] != 0 else float('inf')
+    except ZeroDivisionError:
+        return 'Invalid Data'
+
+    stale = any(p <= 10 for p in [progress_6_to_12, progress_12_to_18, progress_18_to_24])
+    no_progress = row['CUSTOMER_24MO_GROSS'] <= row['CUSTOMER_6MO_GROSS']
+
+    if stale and no_progress:
+        return 'Stale Payor and Absence of Payments'
+    elif stale:
+        return 'Stale Payor'
+    elif no_progress:
+        return 'Absence of Payments'
+    else:
+        return 'No Flag'
+
+    
+# Apply the function to the DataFrame
+df['PaymentFlag'] = df.apply(flag_payment_issues, axis=1)  
+  
+# Balanced-conservative tier selection function
+def get_balanced_conservative_tier(row):
+    comp_score = row['CompositeRiskScore']
+    hri_score = row['Total_HRI_Score']
+    comp_tier = row['CompositeRiskTier']
+    hri_tier = row['HRI_Risk_Tier']
+
+    # Tier ranking
+    tier_ranking = {
+        'Very Low Risk': 1,
+        'Low Risk': 2,
+        'Moderate Risk': 3,
+        'High Risk (Acceptable)': 4,
+        'High Risk': 4,
+        'Unacceptable Risk': 5
+    }
+
+    # Buffer zones
+    composite_buffers = {
+        'Very Low Risk': (0, 0.335),
+        'Low Risk': (0.336, 0.35),
+        'Moderate Risk': (0.351, 0.5),
+        'High Risk (Acceptable)': (0.501, 0.7),
+        'Unacceptable Risk': (0.701, float('inf'))
+    }
+
+    hri_buffers = {
+        'Very Low Risk': (0, 0),
+        'Low Risk': (-8, -1),
+        'Moderate Risk': (-20, -9),
+        'High Risk': (-39, -21),
+        'Unacceptable Risk': (float('-inf'), -40)
+    }
+
+    # Force override if CompositeRiskTier is Unacceptable Risk
+    if comp_tier == 'Unacceptable Risk':
+        return 'Unacceptable Risk'
+
+    # Get buffer and margin
+    comp_buffer = composite_buffers.get(comp_tier, (0, float('inf')))
+    hri_buffer = hri_buffers.get(hri_tier, (float('-inf'), 0))
+    comp_margin = (comp_buffer[1] - comp_buffer[0]) * 0.1
+    hri_margin = (hri_buffer[1] - hri_buffer[0]) * 0.1
+
+    # Adjust rank if near boundary
+    comp_rank = tier_ranking.get(comp_tier, 5)
+    hri_rank = tier_ranking.get(hri_tier, 5)
+
+    if not (comp_buffer[0] + comp_margin <= comp_score <= comp_buffer[1] - comp_margin):
+        comp_rank += 1
+    if not (hri_buffer[0] + hri_margin <= hri_score <= hri_buffer[1] - hri_margin):
+        hri_rank += 1
+
+    # If ranks differ by more than 1, assign middle tier
+    if abs(comp_rank - hri_rank) > 1:
+        middle_rank = (comp_rank + hri_rank) // 2
+        for tier, rank in tier_ranking.items():
+            if rank == middle_rank:
+                return tier
+
+    # Otherwise, choose the more conservative (higher) rank
+    worst_rank = max(comp_rank, hri_rank)
+    for tier, rank in tier_ranking.items():
+        if rank == worst_rank:
+            return tier
+
+
+# Apply to DataFrame
+df['AggregateRiskTier'] = df.apply(get_balanced_conservative_tier, axis=1)
+
+
+# Verification status
+df['VerificationStatus'] = df['AggregateRiskTier'].apply(
+    lambda x: 'Verified' if x == 'Very Low Risk' else 'Verification Required'
+)
+
+filtered_df = df[df['application_type'].isin(['Applied And Converted', 'Converted No Application'])]
+filtered_df = filtered_df[df['application_status'].isin(['Booked Closed', 'Booked'])]
+# Export the DataFrame
+filtered_df.to_excel(output_file, index=False)
+
+print(f"DataFrame successfully exported to {output_file}")
+
+# Final output
+print(filtered_df)
