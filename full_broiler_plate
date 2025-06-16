@@ -1,0 +1,117 @@
+
+import pandas as pd 
+import plotly.express as px 
+from sklearn.model_selection import train_test_split 
+from sklearn.ensemble import IsolationForest 
+from sklearn.metrics import classification_report 
+from sqlalchemy import create_engine, text 
+import logging 
+from datetime import date, timedelta 
+from sqlalchemy.exc import DBAPIError, SQLAlchemyError 
+from contextlib import contextmanager 
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type 
+from tqdm import tqdm 
+import time
+
+"""LOGGING"""
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+"""Configuration"""
+TODAY = date.today() 
+dt1 = TODAY.strftime("%Y") 
+dt2 = TODAY.strftime("%b") 
+dt3 = TODAY.strftime("%d") 
+dt4 = dt3 + dt2 + dt1
+
+YSTDAY = TODAY - timedelta(days=1) 
+dt11 = YSTDAY.strftime("%Y") 
+dt21 = YSTDAY.strftime("%b") 
+dt31 = YSTDAY.strftime("%d") 
+dt41 = dt31 + dt21 + dt11
+
+path_out = f'{dt3}-{dt2}-{dt1}' 
+path_in = f'{dt31}-{dt21}-{dt11}'
+
+START_DATE = TODAY - timedelta(days=30)
+END_DATE = TODAY - timedelta(days=5) # 10 days ago from today START_DATE = END_DATE - timedelta(days=4) # 7 days before END_DATE (inclusive) INPUT_PATH = rf'\‪C:\Users<username>\OneDrive<folder>{path_in}.xlsx' OUTPUT_PATH = rf'\‪C:\Users<username>\OneDrive<folder>{path_out}.xlsx' CONNECTION_STRING1 = "mssql+pyodbc://<DBodbc_connectionname>" CONNECTION_STRING2 = "mssql+pyodbc://<DBodbc_connectionname>"
+
+"""Convert dates to string format"""
+START_DATE_STR = START_DATE.strftime("%Y-%m-%d") 
+END_DATE_STR = END_DATE.strftime("%Y-%m-%d")
+
+"""Update the configuration section"""
+logging.info(f"Date range: {START_DATE_STR} to {END_DATE_STR}")
+
+
+@contextmanager
+def get_db_connection(connection_string):
+    engine = create_engine(
+        connection_string,
+        pool_size=10,
+        max_overflow=20,
+        connect_args={'timeout': 300}
+    )
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+
+CONNECTION_STRING1 = (
+    "mssql+pyodbc://@WAAZDSSQL17/master"
+    "?driver=ODBC+Driver+17+for+SQL+Server"
+    "&trusted_connection=yes"
+)
+CONNECTION_STRING2 = (
+    "mssql+pyodbc://@WAAZDWSQL17/master"
+    "?driver=ODBC+Driver+17+for+SQL+Server"
+    "&trusted_connection=yes"
+)
+
+class QueryExecutionError(Exception): """Custom exception for query execution errors.""" 
+def init(self, message): super().init(message)
+
+@retry(
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=4, max=60),
+    retry=retry_if_exception_type((DBAPIError, SQLAlchemyError)),
+    reraise=True
+)
+
+def execute_query_with_retry(engine, query, params=None, max_retries=3, delay=60):
+    for attempt in range(max_retries):
+        try:
+            with engine.connect() as connection:
+                if params:
+                    result = connection.execute(text(query), params)
+                else:
+                    result = connection.execute(text(query))
+                df = pd.DataFrame(result.fetchall(), columns=result.keys())
+                if df.empty:
+                    raise QueryExecutionError("Query returned an empty DataFrame.") 
+                return df  # Only return if successful
+        except SQLAlchemyError as e:
+            if attempt < max_retries - 1:
+                logging.warning(
+                    f"Query failed. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})"
+                )
+                time.sleep(delay)
+            else:
+                logging.error(
+                    f"Query failed after {max_retries} attempts: {str(e)}"
+                )
+                raise QueryExecutionError(f"Query execution failed: {str(e)}")
+
+def main():
+    try:
+        with (
+            get_db_connection(CONNECTION_STRING1) as engine1,
+            get_db_connection(CONNECTION_STRING2) as engine2
+        ):
+            pbar = tqdm(total=1, desc="Executing Queries")
+            # Your logic here
+            pbar.update(1)
+            pbar.close()
+    except Exception as e:
+        logging.error(f"An error occurred in main: {str(e)}")
+
+
