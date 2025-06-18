@@ -14,7 +14,7 @@ hri_scoring_dict_with_descriptions = {
     28:  {"score": -5,   "desc": "Unable to verify date-of-birth"},
     11:  {"score": -10,  "desc": "The input address may be invalid according to postal specifications"},
     'CL':{"score": -10,  "desc": "The input SSN is not the primary SSN for the input identity"},
-    80:  {"score": None, "desc": "The input phone was missing or incomplete"},  # Score not given
+    80:  {"score": -10, "desc": "The input phone was missing or incomplete"},  # Score not given
     'SR':{"score": -5,   "desc": "Address mismatch on secondary address range"},
     76:  {"score": -1,   "desc": "The input name may have been miskeyed"},
     4:   {"score": -5,   "desc": "The input last name and SSN are verified, but not with the input address and phone"},
